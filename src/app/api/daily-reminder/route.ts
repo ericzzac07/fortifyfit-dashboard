@@ -1,6 +1,65 @@
 import { NextResponse } from 'next/server';
 import { Resend } from 'resend';
-import { format, addDays, startOfWeek, endOfMonth, getDaysInMonth, getDate } from 'date-fns';
+import { format, addDays, startOfWeek, getDaysInMonth, getDate } from 'date-fns';
+
+// Google News RSS에서 기사 가져오기
+async function fetchNews(query: string, limit = 3): Promise<{ title: string; link: string }[]> {
+  try {
+    const url = `https://news.google.com/rss/search?q=${encodeURIComponent(query)}&hl=ko&gl=KR&ceid=KR:ko`;
+    const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
+    const xml = await res.text();
+    const items: { title: string; link: string }[] = [];
+    const itemRegex = /<item>[\s\S]*?<title><!\[CDATA\[(.*?)\]\]><\/title>[\s\S]*?<link>(.*?)<\/link>[\s\S]*?<\/item>/g;
+    let match;
+    while ((match = itemRegex.exec(xml)) !== null && items.length < limit) {
+      items.push({ title: match[1], link: match[2] });
+    }
+    // fallback: title without CDATA
+    if (items.length === 0) {
+      const simpleRegex = /<item>[\s\S]*?<title>(.*?)<\/title>[\s\S]*?<link>(.*?)<\/link>[\s\S]*?<\/item>/g;
+      while ((match = simpleRegex.exec(xml)) !== null && items.length < limit) {
+        items.push({ title: match[1].replace(/<!\[CDATA\[|\]\]>/g, ''), link: match[2] });
+      }
+    }
+    return items;
+  } catch {
+    return [];
+  }
+}
+
+// 오늘의 키워드 추천 (로테이션)
+const KEYWORD_SETS = [
+  {
+    theme: '피부과 시술 키워드',
+    keywords: ['보톡스 효과 기간', '필러 종류 비교', '레이저 토닝 후기', '피부과 가격표', '여드름 흉터 치료'],
+    tip: '시술명 + "후기", "가격", "효과" 조합이 검색량 높음',
+  },
+  {
+    theme: '성형외과 키워드',
+    keywords: ['코필러 vs 코수술', '눈밑지방 재배치', '이중턱 지방흡입', '실리프팅 효과', '안면윤곽 비용'],
+    tip: '"vs" 비교 키워드와 "비용/가격" 키워드가 전환율 높음',
+  },
+  {
+    theme: '의료 SEO 롱테일',
+    keywords: ['건대 피부과 추천', '강남 보톡스 잘하는곳', '피부과 시술 종류', '의료진 프로필 SEO', '병원 후기 마케팅'],
+    tip: '지역명 + 시술명 = 로컬 SEO의 핵심. 경쟁 낮고 전환 높음',
+  },
+  {
+    theme: 'GEO 최적화 키워드',
+    keywords: ['AI 검색 최적화', 'Perplexity 상위 노출', '구조화된 데이터 의료', 'FAQ 스키마 병원', 'E-E-A-T 의료 콘텐츠'],
+    tip: 'AI 검색엔진에 인용되려면 FAQ + 스키마 + 출처 명시가 필수',
+  },
+  {
+    theme: '네이버 블로그 SEO',
+    keywords: ['네이버 상위노출 방법', '블로그 최적화 2025', '네이버 검색 알고리즘', '의료 블로그 작성법', 'C-rank 다이아 최적화'],
+    tip: '네이버는 "체류시간"이 핵심 지표. 1500자 이상 + 이미지 3장 이상',
+  },
+  {
+    theme: 'Threads/SNS 콘텐츠',
+    keywords: ['스레드 알고리즘', '의료 SNS 마케팅', '숏폼 콘텐츠 전략', 'SNS에서 블로그 유입', '스레드 팔로워 늘리기'],
+    tip: 'Threads는 텍스트 기반 — 전문 지식 공유가 팔로워 증가에 효과적',
+  },
+];
 
 const QUOTES = [
   '완벽하지 않아도 된다. 오늘 한 줄이 내일의 자산이 된다.',
@@ -157,6 +216,31 @@ export async function GET(request: Request) {
   const punch = PUNCHLINES[Math.floor(Math.random() * PUNCHLINES.length)];
   const conv = CONVICTION[Math.floor(Math.random() * CONVICTION.length)];
   const proof = DIRECTION_PROOF[Math.floor(Math.random() * DIRECTION_PROOF.length)];
+  const kwSet = KEYWORD_SETS[Math.floor(Math.random() * KEYWORD_SETS.length)];
+
+  // 뉴스 가져오기 (병렬)
+  // 국내+해외 뉴스 수집 (병렬)
+  const newsResults = await Promise.all([
+    // 국내
+    fetchNews('의료 SEO 마케팅', 3),
+    fetchNews('병원 마케팅 트렌드', 2),
+    fetchNews('네이버 블로그 SEO', 2),
+    // 해외 — SEO/GEO/AEO 기술
+    fetchNews('medical SEO strategy', 2),
+    fetchNews('AI search optimization GEO', 2),
+    fetchNews('answer engine optimization AEO', 2),
+    fetchNews('Google SGE AI overview SEO', 2),
+    fetchNews('technical SEO structured data', 2),
+    fetchNews('Perplexity AI citation SEO', 2),
+    fetchNews('healthcare content marketing', 2),
+  ]);
+  // 합치고 중복 제거
+  const seen = new Set<string>();
+  const news = newsResults.flat().filter((n) => {
+    if (seen.has(n.title)) return false;
+    seen.add(n.title);
+    return true;
+  }).slice(0, 15);
 
   const isSetupPhase = today < new Date(2026, 5, 1); // 6월 1일 전
   const todayTasks = isSetupPhase
@@ -240,6 +324,26 @@ export async function GET(request: Request) {
         <h3 style="color: #92400e; font-size: 13px; margin: 0 0 8px 0;">${monthName} 목표 (D-${daysLeft})</h3>
         ${monthGoalHtml}
       </div>
+
+      <!-- 오늘의 키워드 추천 -->
+      <div style="background: #f0f9ff; border-radius: 12px; padding: 20px; margin-bottom: 20px; border-left: 4px solid #0ea5e9;">
+        <h3 style="color: #0369a1; font-size: 13px; margin: 0 0 10px 0;">오늘의 키워드 — ${kwSet.theme}</h3>
+        <div style="margin-bottom: 10px;">
+          ${kwSet.keywords.map((kw) => `<span style="display:inline-block;background:#e0f2fe;color:#0369a1;padding:4px 10px;border-radius:16px;font-size:12px;margin:0 4px 4px 0;">${kw}</span>`).join('')}
+        </div>
+        <p style="color: #6b7280; font-size: 12px; margin: 0;">💡 ${kwSet.tip}</p>
+      </div>
+
+      <!-- SEO/GEO 뉴스 -->
+      ${news.length > 0 ? `
+      <div style="background: #ffffff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 20px; margin-bottom: 20px;">
+        <h3 style="color: #1a1a1a; font-size: 13px; margin: 0 0 12px 0;">SEO / GEO / AEO 최신 뉴스 (국내+해외)</h3>
+        ${news.map((n) => `<div style="margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px solid #f3f4f6;">
+          <a href="${n.link}" style="color: #2563eb; font-size: 13px; text-decoration: none; line-height: 1.5;">${n.title}</a>
+        </div>`).join('')}
+        <p style="color: #9ca3af; font-size: 11px; margin: 0;">경쟁자는 이 뉴스를 안 읽는다. 읽는 것만으로 앞서가는 거야.</p>
+      </div>
+      ` : ''}
 
       <!-- CTA -->
       <div style="text-align: center; margin-bottom: 24px;">

@@ -11,6 +11,7 @@ import BeliefBoard from '@/components/BeliefBoard';
 import IdeaBox from '@/components/IdeaBox';
 import RuleBook from '@/components/RuleBook';
 import ComparisonDefense from '@/components/ComparisonDefense';
+import ArticleCollector from '@/components/ArticleCollector';
 
 const QUOTES = [
   '완벽하지 않아도 된다. 오늘 한 줄이 내일의 자산이 된다.',
@@ -68,6 +69,7 @@ export default function Home() {
 
       <div className="max-w-4xl mx-auto p-4 space-y-4">
         <ContentPipeline />
+        <ArticleCollector />
         <KpiTracker />
 
         <div className="border border-gray-200 rounded-xl overflow-hidden">
