@@ -114,13 +114,14 @@ export default function ArticleCollector() {
       {showForm && (
         <div className="flex gap-2 mb-4">
           <input
-            type="url"
+            type="text"
             placeholder="기사 URL 붙여넣기"
             value={url}
             onChange={(e) => setUrl(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && fetchAndSave()}
             className="flex-1 px-3 py-2.5 rounded-lg bg-gray-50 text-sm border border-gray-200 focus:border-blue-400 focus:outline-none"
             autoFocus
+            autoComplete="off"
             disabled={loading}
           />
           <button onClick={fetchAndSave} disabled={loading || !url.trim()}
