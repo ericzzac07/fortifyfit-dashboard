@@ -2,23 +2,25 @@ import { NextResponse } from 'next/server';
 import { Resend } from 'resend';
 import { format, addDays, startOfWeek, getDaysInMonth, getDate } from 'date-fns';
 
+type NewsItem = { title: string; link: string; source: string; date: string };
+
 // Google News RSS에서 기사 가져오기
-async function fetchNews(query: string, limit = 3): Promise<{ title: string; link: string }[]> {
+async function fetchNews(query: string, limit = 3): Promise<NewsItem[]> {
   try {
     const url = `https://news.google.com/rss/search?q=${encodeURIComponent(query)}&hl=ko&gl=KR&ceid=KR:ko`;
     const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
     const xml = await res.text();
-    const items: { title: string; link: string }[] = [];
-    const itemRegex = /<item>[\s\S]*?<title><!\[CDATA\[(.*?)\]\]><\/title>[\s\S]*?<link>(.*?)<\/link>[\s\S]*?<\/item>/g;
+    const items: NewsItem[] = [];
+    const itemRegex = /<item>[\s\S]*?<title><!\[CDATA\[(.*?)\]\]><\/title>[\s\S]*?<link>(.*?)<\/link>[\s\S]*?<pubDate>(.*?)<\/pubDate>[\s\S]*?<source[^>]*>(.*?)<\/source>[\s\S]*?<\/item>/g;
     let match;
     while ((match = itemRegex.exec(xml)) !== null && items.length < limit) {
-      items.push({ title: match[1], link: match[2] });
+      items.push({ title: match[1], link: match[2], date: match[3], source: match[4] });
     }
-    // fallback: title without CDATA
+    // fallback
     if (items.length === 0) {
-      const simpleRegex = /<item>[\s\S]*?<title>(.*?)<\/title>[\s\S]*?<link>(.*?)<\/link>[\s\S]*?<\/item>/g;
+      const simpleRegex = /<item>[\s\S]*?<title>(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?<\/title>[\s\S]*?<link>(.*?)<\/link>[\s\S]*?<\/item>/g;
       while ((match = simpleRegex.exec(xml)) !== null && items.length < limit) {
-        items.push({ title: match[1].replace(/<!\[CDATA\[|\]\]>/g, ''), link: match[2] });
+        items.push({ title: match[1], link: match[2], date: '', source: '' });
       }
     }
     return items;
@@ -26,6 +28,8 @@ async function fetchNews(query: string, limit = 3): Promise<{ title: string; lin
     return [];
   }
 }
+
+type CategorizedNews = { category: string; emoji: string; items: NewsItem[] };
 
 // 오늘의 키워드 추천 (로테이션)
 const KEYWORD_SETS = [
@@ -219,28 +223,34 @@ export async function GET(request: Request) {
   const kwSet = KEYWORD_SETS[Math.floor(Math.random() * KEYWORD_SETS.length)];
 
   // 뉴스 가져오기 (병렬)
-  // 국내+해외 뉴스 수집 (병렬)
-  const newsResults = await Promise.all([
-    // 국내
-    fetchNews('의료 SEO 마케팅', 3),
-    fetchNews('병원 마케팅 트렌드', 2),
-    fetchNews('네이버 블로그 SEO', 2),
-    // 해외 — SEO/GEO/AEO 기술
-    fetchNews('medical SEO strategy', 2),
-    fetchNews('AI search optimization GEO', 2),
-    fetchNews('answer engine optimization AEO', 2),
-    fetchNews('Google SGE AI overview SEO', 2),
-    fetchNews('technical SEO structured data', 2),
-    fetchNews('Perplexity AI citation SEO', 2),
+  // 카테고리별 뉴스 수집 (병렬)
+  const [krMedical, krSeo, krNaver, enSeo, enGeo, enAeo, enSge, enTech, enPerplexity, enHealthcare] = await Promise.all([
+    fetchNews('의료 마케팅 트렌드', 3),
+    fetchNews('SEO 마케팅 전략', 3),
+    fetchNews('네이버 블로그 상위노출', 2),
+    fetchNews('medical SEO strategy 2025', 3),
+    fetchNews('generative engine optimization GEO', 3),
+    fetchNews('answer engine optimization AEO', 3),
+    fetchNews('Google AI overview SGE search', 3),
+    fetchNews('technical SEO structured data schema', 3),
+    fetchNews('Perplexity AI citation optimization', 2),
     fetchNews('healthcare content marketing', 2),
   ]);
-  // 합치고 중복 제거
+
+  // 카테고리별 정리 (중복 제거)
   const seen = new Set<string>();
-  const news = newsResults.flat().filter((n) => {
+  const dedup = (items: NewsItem[]) => items.filter((n) => {
     if (seen.has(n.title)) return false;
     seen.add(n.title);
     return true;
-  }).slice(0, 15);
+  });
+
+  const newsCategories: CategorizedNews[] = [
+    { category: '국내 의료마케팅 & SEO', emoji: '🇰🇷', items: dedup([...krMedical, ...krSeo, ...krNaver]).slice(0, 5) },
+    { category: 'SEO & Technical SEO', emoji: '🔍', items: dedup([...enSeo, ...enTech]).slice(0, 4) },
+    { category: 'GEO & AEO (AI 검색 최적화)', emoji: '🤖', items: dedup([...enGeo, ...enAeo, ...enSge, ...enPerplexity]).slice(0, 5) },
+    { category: 'Healthcare Content', emoji: '🏥', items: dedup(enHealthcare).slice(0, 3) },
+  ].filter((c) => c.items.length > 0);
 
   const isSetupPhase = today < new Date(2026, 5, 1); // 6월 1일 전
   const todayTasks = isSetupPhase
@@ -334,14 +344,27 @@ export async function GET(request: Request) {
         <p style="color: #6b7280; font-size: 12px; margin: 0;">💡 ${kwSet.tip}</p>
       </div>
 
-      <!-- SEO/GEO 뉴스 -->
-      ${news.length > 0 ? `
-      <div style="background: #ffffff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 20px; margin-bottom: 20px;">
-        <h3 style="color: #1a1a1a; font-size: 13px; margin: 0 0 12px 0;">SEO / GEO / AEO 최신 뉴스 (국내+해외)</h3>
-        ${news.map((n) => `<div style="margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px solid #f3f4f6;">
-          <a href="${n.link}" style="color: #2563eb; font-size: 13px; text-decoration: none; line-height: 1.5;">${n.title}</a>
-        </div>`).join('')}
-        <p style="color: #9ca3af; font-size: 11px; margin: 0;">경쟁자는 이 뉴스를 안 읽는다. 읽는 것만으로 앞서가는 거야.</p>
+      <!-- SEO/GEO/AEO 뉴스 -->
+      ${newsCategories.length > 0 ? `
+      <div style="background: #ffffff; border: 1px solid #e5e7eb; border-radius: 12px; overflow: hidden; margin-bottom: 20px;">
+        <div style="padding: 16px 20px; border-bottom: 1px solid #f3f4f6;">
+          <h3 style="color: #1a1a1a; font-size: 14px; margin: 0;">오늘의 뉴스 브리핑</h3>
+          <p style="color: #9ca3af; font-size: 11px; margin: 4px 0 0 0;">경쟁자는 이걸 안 읽는다. 읽는 것만으로 앞서가는 거야.</p>
+        </div>
+        ${newsCategories.map((cat) => `
+          <div style="padding: 14px 20px; border-bottom: 1px solid #f3f4f6;">
+            <div style="font-size: 12px; font-weight: 600; color: #6b7280; margin-bottom: 10px;">${cat.emoji} ${cat.category}</div>
+            ${cat.items.map((n) => `
+              <div style="margin-bottom: 8px; padding-left: 8px; border-left: 2px solid #e5e7eb;">
+                <a href="${n.link}" style="color: #2563eb; font-size: 13px; text-decoration: none; line-height: 1.5; display: block;">${n.title}</a>
+                ${n.source || n.date ? `<div style="font-size: 11px; color: #9ca3af; margin-top: 2px;">${n.source ? n.source : ''}${n.source && n.date ? ' · ' : ''}${n.date ? new Date(n.date).toLocaleDateString('ko-KR', { month: 'short', day: 'numeric' }) : ''}</div>` : ''}
+              </div>
+            `).join('')}
+          </div>
+        `).join('')}
+        <div style="padding: 12px 20px; background: #f9fafb;">
+          <p style="color: #6b7280; font-size: 11px; margin: 0;">좋은 기사는 대시보드에서 수집 → 아이디어 추가 → 콘텐츠로 변환</p>
+        </div>
       </div>
       ` : ''}
 
